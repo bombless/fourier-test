@@ -1,0 +1,8 @@
+[package]
+name = "fourier-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hound = "3.5.1"
+plot_starter = "0.34.6"
