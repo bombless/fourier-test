@@ -7,104 +7,112 @@ use std::f64::consts::PI;
 
 use std::env::args;
 
-// fn data(window: f64) -> Option<impl Iterator<Item = (f64, f64)>> {
-//     let mut reader = WavReader::open("./The-Internationale.wav").unwrap();
-//     let spec = reader.spec();
-//     let sr = spec.sample_rate;
-//     let ch = spec.channels as usize;
-//     if window * sr as f64 / 6.0 < 3. {
-//         return None;
-//     }
-//     // println!("sr {sr} ch {ch}");
-//     let data = reader
-//         .samples::<i16>()
-//         .map(|x| x.unwrap() as f64)
-//         .step_by(ch)
-//         .skip(sr as usize + sr as usize / 6)
-//         .take(sr as usize / 6) // sample for one second
-//         .collect::<Vec<_>>();
-//     #[rustfmt::skip]
-//     Some((0..data.len())
-//         .map(move |i| (i, i as f64 / sr as f64)) // construct (index, time)
-//         .map(move |(i, t)| (t, data[i] as f64 / 32768.0)) // construct (time, amplitude)
-//         .map(move |(t, amplitude)| (t * window * 2.0 * PI, amplitude)) // construct (radians, amplitude)
-//         .map(|(radians, amplitude)| (radians.cos() * (1.0 + amplitude), radians.sin() * (1.0 + amplitude))))
-// }
-
-fn data(frequency: f64) -> Option<impl Iterator<Item = (f64, f64)>> {
+// 生成测试信号（不含任何频率检测逻辑）
+fn generate_signal() -> (usize, Vec<f64>) {
     let sr = 40000;
-    let duration = 1.0; // 1秒数据
-    let n_samples = (sr as f64 * duration) as usize;
+    let signal_freq = 440; // 测试信号频率
     
-    // 生成测试信号：200Hz正弦波
-    let signal_freq = 200.0;
-    
-    Some(
-        (0..n_samples)
-            .map(move |i| {
-                let t = i as f64 / sr as f64;
-                let amplitude = (2.0 * PI * signal_freq * t).sin();
-                (t, amplitude)
-            })
-            // 关键：直接用amplitude，不要加1.0！
-            .map(move |(t, amplitude)| {
-                let theta = 2.0 * PI * frequency * t;
-                (
-                    amplitude * theta.cos(),
-                    amplitude * theta.sin(),
-                )
-            }),
-    )
+    (sr, (0..sr)
+        .map(|i| {
+            let t = i as f64 / sr as f64;
+            (2.0 * PI * signal_freq as f64 * t).sin()
+        })
+        .collect())
 }
 
-fn center_length(data: &[(f64, f64)]) -> f64 {
-    let factor = 1.0 / data.len() as f64;
-    let center = data
+// 从WAV文件读取信号
+fn load_signal_from_wav() -> (usize, Vec<f64>) {
+    let mut reader = WavReader::open("./The-Internationale.wav").unwrap();
+    let spec = reader.spec();
+    let sr = spec.sample_rate as usize;
+    let ch = spec.channels as usize;
+    
+    (sr, reader
+        .samples::<i16>()
+        .map(|x| x.unwrap() as f64 / 32768.0)
+        .step_by(ch)
+        .skip(sr + sr / 6)
+        .take(sr / 6)
+        .collect())
+}
+
+// 将信号转换为极坐标点（用于可视化）
+fn signal_to_polar(signal: &[f64], test_freq: f64, sample_rate: f64) -> Vec<(f64, f64)> {
+    signal
         .iter()
-        .cloned()
-        .reduce(|(sx, sy), (x, y)| (sx + x * factor, sy + y * factor))
-        .unwrap();
-    (center.0 * center.0 + center.1 * center.1).sqrt()
+        .enumerate()
+        .map(|(i, &amplitude)| {
+            let t = i as f64 / sample_rate;
+            let theta = 2.0 * PI * test_freq * t;
+            (
+                amplitude * theta.cos(),
+                amplitude * theta.sin(),
+            )
+        })
+        .collect()
 }
 
+// 计算重心到原点的距离（频率检测核心算法）
+fn calculate_centroid_magnitude(signal: &[f64], test_freq: f64, sample_rate: f64) -> f64 {
+    let n = signal.len() as f64;
+    let mut sum_x = 0.0;
+    let mut sum_y = 0.0;
+    
+    for (i, &amplitude) in signal.iter().enumerate() {
+        let t = i as f64 / sample_rate;
+        let theta = 2.0 * PI * test_freq * t;
+        sum_x += amplitude * theta.cos();
+        sum_y += amplitude * theta.sin();
+    }
+    
+    let center_x = sum_x / n;
+    let center_y = sum_y / n;
+    
+    (center_x * center_x + center_y * center_y).sqrt()
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plotter = Plotter::new();
     
-    let sr = 40000.0;
-    let signal_freq = 200.0; // 我们知道信号是200Hz
+    // 1. 生成或加载信号
+    let (sample_rate, signal) = load_signal_from_wav();
+    // let (sample_rate, signal) = generate_signal();
+    let sample_rate = sample_rate as f64;
+
     
-    // 合理的搜索范围：0到奈奎斯特频率
-    let mut max_center = 0.0;
-    let mut max_freq = 0.0;
+    // 2. 搜索频率
+    let mut max_magnitude = 0.0;
+    let mut detected_freq = 0.0;
     
-    // 改用线性步进，精细搜索
     let freq_step = 1.0; // 1Hz步进
-    let mut freq = 0.0;
+    let mut test_freq = 0.0;
     
-    while freq <= sr / 2.0 { // 奈奎斯特频率
-        if let Some(data) = data(freq) {
-            let data = data.collect::<Vec<_>>();
-            let len = center_length(&data);
-            
-            if freq as i32 % 50 == 0 { // 每50Hz打印一次
-                println!("freq: {:.1} Hz, magnitude: {:.6}", freq, len);
-            }
-            
-            if len > max_center {
-                max_center = len;
-                max_freq = freq;
-            }
+    println!("开始频率扫描...\n");
+    
+    while test_freq <= sample_rate / 2.0 {
+        let magnitude = calculate_centroid_magnitude(&signal, test_freq, sample_rate);
+        
+        if test_freq as i32 % 50 == 0 {
+            println!("测试频率: {:6.1} Hz, 幅度: {:.6}", test_freq, magnitude);
         }
-        freq += freq_step;
+        
+        if magnitude > max_magnitude {
+            max_magnitude = magnitude;
+            detected_freq = test_freq;
+        }
+        
+        test_freq += freq_step;
     }
     
-    println!("\n检测到的频率: {:.1} Hz (实际: {:.1} Hz)", max_freq, signal_freq);
-    println!("最大幅度: {:.6}", max_center);
+    println!("\n===================");
+    println!("检测到的频率: {:.1} Hz", detected_freq);
+    println!("最大幅度: {:.6}", max_magnitude);
+    println!("===================\n");
     
-    // 可视化最佳频率
+    // 3. 可视化检测到的频率对应的极坐标图
+    let polar_points = signal_to_polar(&signal, detected_freq, sample_rate);
     Chart::on(&plotter)
-        .data(data(max_freq).unwrap())
+        .data(polar_points.into_iter())
         .color(Color::RED);
     
     plotter.present()
