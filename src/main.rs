@@ -110,10 +110,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===================\n");
     
     // 3. 可视化检测到的频率对应的极坐标图
-    let polar_points = signal_to_polar(&signal, detected_freq, sample_rate);
+    // let polar_points = signal_to_polar(&signal, detected_freq, sample_rate);
+    // Chart::on(&plotter)
+    //     .data(polar_points.into_iter())
+    //     .color(Color::RED);
+
+    let freq_spectrum: Vec<(f64, f64)> = (0..20000)
+    .step_by(10)
+    .map(|f| {
+        let freq = f as f64;
+        let mag = calculate_centroid_magnitude(&signal, freq, sample_rate);
+        (freq, mag)
+    })
+    .collect();
+
+    // 绘制频谱图
     Chart::on(&plotter)
-        .data(polar_points.into_iter())
-        .color(Color::RED);
+        .data(freq_spectrum.into_iter())
+        .color(Color::BLUE);
     
     plotter.present()
 }
