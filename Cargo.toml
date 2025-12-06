@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytemuck = "1.24.0"
 hound = "3.5.1"
 plot_starter = "0.34.6"
+pollster = "0.4.0"
+wgpu = { git = "https://github.com/FL33TW00D/wgpu", branch = "feature/multi-dim-compute-subgroups", features = ["fragile-send-sync-non-atomic-wasm"] }
